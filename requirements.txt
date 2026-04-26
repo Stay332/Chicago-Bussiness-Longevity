@@ -1,0 +1,8 @@
+flask
+flask-cors
+lifelines
+anthropic
+gunicorn
+pandas
+numpy
+scikit-learn

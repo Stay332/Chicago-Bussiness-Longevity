@@ -5,5 +5,5 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app
     envVars:
-      - key: ANTHROPIC_API_KEY
+      - key: OPENAI_API_KEY
         sync: false

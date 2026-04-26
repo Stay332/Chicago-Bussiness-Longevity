@@ -5,7 +5,7 @@ import pickle
 
 import numpy as np
 import pandas as pd
-import anthropic
+from openai import OpenAI
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
@@ -77,9 +77,7 @@ NEIGHBORHOODS = {
     "englewood": (41.7791, -87.6466),
     "south shore": (41.7611, -87.5713),
     "woodlawn": (41.7794, -87.5964),
-    "grand crossing": (41.7620, -87.6178),
     "beverly": (41.7240, -87.6578),
-    "morgan park": (41.6942, -87.6618),
 }
 
 SYSTEM_PROMPT = f"""You are a friendly data analyst assistant that helps people understand their Chicago business survival chances using a statistical model trained on real Chicago business license data.
@@ -95,33 +93,36 @@ Chicago neighborhoods you know: {", ".join(NEIGHBORHOODS.keys())}
 
 Rules:
 - If the user mentions a neighborhood not in your list, pick the geographically nearest one you know.
-- If they give a street address, estimate coordinates from the Chicago street grid (State & Madison = 41.8819, -87.6278; each city block ≈ 0.011 degrees latitude or longitude).
+- If they give a street address, estimate coordinates from the Chicago street grid (State & Madison = 41.8819, -87.6278; each city block ≈ 0.011 degrees).
 - Once you have BOTH location and license type, call predict_business_survival immediately — do not ask for confirmation.
 - If you only have one piece of information, ask for the other in one friendly sentence.
 - Keep all conversational responses under 2 sentences."""
 
 TOOLS = [
     {
-        "name": "predict_business_survival",
-        "description": "Run the Cox Proportional Hazards survival model for a Chicago business.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "latitude": {
-                    "type": "number",
-                    "description": "Latitude of the business location (e.g. 41.8827)",
+        "type": "function",
+        "function": {
+            "name": "predict_business_survival",
+            "description": "Run the Cox Proportional Hazards survival model for a Chicago business. Call this once you know the business location and type.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "latitude": {
+                        "type": "number",
+                        "description": "Latitude of the business location in Chicago (e.g. 41.8827)",
+                    },
+                    "longitude": {
+                        "type": "number",
+                        "description": "Longitude of the business location in Chicago (e.g. -87.6233)",
+                    },
+                    "license_type": {
+                        "type": "string",
+                        "enum": LICENSE_TYPES,
+                        "description": "Business license type",
+                    },
                 },
-                "longitude": {
-                    "type": "number",
-                    "description": "Longitude of the business location (e.g. -87.6233)",
-                },
-                "license_type": {
-                    "type": "string",
-                    "enum": LICENSE_TYPES,
-                    "description": "Business license type",
-                },
+                "required": ["latitude", "longitude", "license_type"],
             },
-            "required": ["latitude", "longitude", "license_type"],
         },
     }
 ]
@@ -129,7 +130,7 @@ TOOLS = [
 # In-memory session store (sufficient for a demo)
 sessions: dict = {}
 
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 # ---------------------------------------------------------------------------
 # Prediction helper
@@ -175,47 +176,58 @@ def chat():
     session_id: str = body.get("session_id") or str(uuid.uuid4())
 
     if session_id not in sessions:
-        sessions[session_id] = []
+        sessions[session_id] = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     history = sessions[session_id]
     history.append({"role": "user", "content": user_message})
 
-    # First call to Claude
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1024,
-        system=SYSTEM_PROMPT,
-        tools=TOOLS,
+    # First call to OpenAI
+    response = client.chat.completions.create(
+        model="gpt-4o",
         messages=history,
+        tools=TOOLS,
+        tool_choice="auto",
     )
 
-    if response.stop_reason == "tool_use":
-        tool_block = next(b for b in response.content if b.type == "tool_use")
-        inp = tool_block.input
+    msg = response.choices[0].message
+
+    if response.choices[0].finish_reason == "tool_calls":
+        tool_call = msg.tool_calls[0]
+        inp = json.loads(tool_call.function.arguments)
 
         prediction = run_prediction(inp["latitude"], inp["longitude"], inp["license_type"])
 
-        # Build history with tool call + result
-        history.append({"role": "assistant", "content": response.content})
+        # Add assistant's tool call to history
         history.append({
-            "role": "user",
-            "content": [{
-                "type": "tool_result",
-                "tool_use_id": tool_block.id,
-                "content": json.dumps(prediction),
+            "role": "assistant",
+            "content": msg.content,
+            "tool_calls": [{
+                "id": tool_call.id,
+                "type": "function",
+                "function": {
+                    "name": tool_call.function.name,
+                    "arguments": tool_call.function.arguments,
+                },
             }],
         })
 
+        # Add tool result
+        history.append({
+            "role": "tool",
+            "tool_call_id": tool_call.id,
+            "content": json.dumps(prediction),
+        })
+
         # Get Claude's final narrative response
-        final = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=512,
-            system=SYSTEM_PROMPT,
-            tools=TOOLS,
+        final = client.chat.completions.create(
+            model="gpt-4o",
             messages=history,
+            tools=TOOLS,
+            tool_choice="none",
         )
-        final_text = next(b.text for b in final.content if b.type == "text")
-        history.append({"role": "assistant", "content": [{"type": "text", "text": final_text}]})
+
+        final_text = final.choices[0].message.content
+        history.append({"role": "assistant", "content": final_text})
 
         return jsonify({
             "type": "prediction",
@@ -229,10 +241,9 @@ def chat():
             "session_id": session_id,
         })
 
-    # Conversational reply (Claude asking for more info)
-    text_block = next(b for b in response.content if b.type == "text")
-    reply = text_block.text
-    history.append({"role": "assistant", "content": [{"type": "text", "text": reply}]})
+    # Conversational reply (asking for more info)
+    reply = msg.content
+    history.append({"role": "assistant", "content": reply})
 
     return jsonify({
         "type": "question",

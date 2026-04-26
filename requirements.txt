@@ -1,7 +1,7 @@
 flask
 flask-cors
 lifelines
-anthropic
+openai
 gunicorn
 pandas
 numpy

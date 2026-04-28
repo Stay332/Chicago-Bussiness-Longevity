@@ -2,6 +2,7 @@ flask
 flask-cors
 lifelines
 openai
+requests
 gunicorn
 pandas
 numpy

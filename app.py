@@ -5,6 +5,7 @@ import pickle
 
 import numpy as np
 import pandas as pd
+import requests
 from openai import OpenAI
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -120,12 +121,42 @@ TOOLS = [
                         "enum": LICENSE_TYPES,
                         "description": "Business license type",
                     },
+                    "zip_code": {
+                        "type": "integer",
+                        "description": "Chicago ZIP code of the business location (e.g. 60601)",
+                    },
                 },
-                "required": ["latitude", "longitude", "license_type"],
+                "required": ["latitude", "longitude", "license_type", "zip_code"],
             },
         },
     }
 ]
+
+# ---------------------------------------------------------------------------
+# Load ACS rent + income lookup (ZIP → (median_rent, median_income))
+# ---------------------------------------------------------------------------
+def _load_acs() -> dict:
+    url = (
+        "https://api.census.gov/data/2022/acs/acs5"
+        "?get=B25064_001E,B19013_001E"
+        "&for=zip%20code%20tabulation%20area:*"
+        "&in=state:17"
+    )
+    try:
+        header, *rows = requests.get(url, timeout=20).json()
+        lookup = {}
+        for row in rows:
+            zip_code = int(row[header.index("zip code tabulation area")])
+            rent     = float(row[0]) if float(row[0]) > 0 else None
+            income   = float(row[1]) if float(row[1]) > 0 else None
+            lookup[zip_code] = (rent, income)
+        return lookup
+    except Exception:
+        return {}
+
+ACS_LOOKUP: dict = _load_acs()
+_IL_MEDIAN_RENT   = float(pd.Series([v[0] for v in ACS_LOOKUP.values() if v[0]]).median()) if ACS_LOOKUP else 1050.0
+_IL_MEDIAN_INCOME = float(pd.Series([v[1] for v in ACS_LOOKUP.values() if v[1]]).median()) if ACS_LOOKUP else 72000.0
 
 # In-memory session store (sufficient for a demo)
 sessions: dict = {}
@@ -136,11 +167,17 @@ client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 # Prediction helper
 # ---------------------------------------------------------------------------
 
-def run_prediction(latitude: float, longitude: float, license_type: str) -> dict:
+def run_prediction(latitude: float, longitude: float, license_type: str, zip_code: int = 0) -> dict:
+    rent, income = ACS_LOOKUP.get(zip_code, (None, None))
+    median_rent   = rent   if rent   else _IL_MEDIAN_RENT
+    median_income = income if income else _IL_MEDIAN_INCOME
+
     required_features = list(model.params_.index)
     row = {feat: 0 for feat in required_features}
-    row["LATITUDE"] = latitude
-    row["LONGITUDE"] = longitude
+    row["LATITUDE"]       = latitude
+    row["LONGITUDE"]      = longitude
+    row["MEDIAN_RENT"]    = median_rent
+    row["MEDIAN_INCOME"]  = median_income
     if license_type in required_features:
         row[license_type] = 1
 
@@ -195,7 +232,7 @@ def chat():
         tool_call = msg.tool_calls[0]
         inp = json.loads(tool_call.function.arguments)
 
-        prediction = run_prediction(inp["latitude"], inp["longitude"], inp["license_type"])
+        prediction = run_prediction(inp["latitude"], inp["longitude"], inp["license_type"], inp.get("zip_code", 0))
 
         # Add assistant's tool call to history
         history.append({

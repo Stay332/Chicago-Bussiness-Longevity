@@ -5,36 +5,37 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Chicago Business Survival Predictor</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
-    /* ── Reset & base ─────────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg:          #0f1117;
-      --surface:     #1a1d27;
-      --surface2:    #22263a;
-      --border:      #2e3354;
-      --accent:      #4f7eff;
-      --accent-dim:  #2b4cbf;
-      --user-bg:     #1e3a8a;
-      --bot-bg:      #1e2235;
-      --text:        #e8eaf0;
-      --muted:       #7b82a8;
-      --green:       #22c55e;
-      --yellow:      #f59e0b;
-      --red:         #ef4444;
-      --radius:      14px;
-      --font:        'Inter', system-ui, sans-serif;
+      --bg:         #0f1117;
+      --surface:    #1a1d27;
+      --surface2:   #22263a;
+      --border:     #2e3354;
+      --accent:     #4f7eff;
+      --accent-dim: #2b4cbf;
+      --user-bg:    #1e3a8a;
+      --bot-bg:     #1e2235;
+      --text:       #e8eaf0;
+      --muted:      #7b82a8;
+      --green:      #22c55e;
+      --yellow:     #f59e0b;
+      --red:        #ef4444;
+      --radius:     14px;
+      --font:       'Inter', system-ui, sans-serif;
+      --chat-w:     420px;
     }
 
+    html, body { height: 100%; overflow: hidden; }
     body {
       font-family: var(--font);
       background: var(--bg);
       color: var(--text);
-      height: 100dvh;
       display: flex;
       flex-direction: column;
-      overflow: hidden;
     }
 
     /* ── Header ───────────────────────────────────────────────────────── */
@@ -42,212 +43,202 @@
       display: flex;
       align-items: center;
       gap: 12px;
-      padding: 14px 20px;
+      padding: 12px 20px;
       background: var(--surface);
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
+      z-index: 10;
     }
     .logo {
-      width: 38px; height: 38px;
+      width: 36px; height: 36px;
       background: linear-gradient(135deg, var(--accent), #7c3aed);
       border-radius: 10px;
       display: flex; align-items: center; justify-content: center;
-      font-size: 20px;
+      font-size: 18px; flex-shrink: 0;
     }
-    header h1 { font-size: 16px; font-weight: 600; letter-spacing: -.3px; }
-    header p  { font-size: 12px; color: var(--muted); }
+    header h1 { font-size: 15px; font-weight: 600; }
+    header p  { font-size: 11px; color: var(--muted); }
     .header-right { margin-left: auto; display: flex; gap: 8px; }
     .btn-icon {
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      color: var(--muted);
-      border-radius: 8px;
-      padding: 7px 12px;
-      cursor: pointer;
-      font-size: 13px;
-      transition: all .15s;
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--muted); border-radius: 8px; padding: 6px 12px;
+      cursor: pointer; font-size: 12px; transition: all .15s; white-space: nowrap;
     }
     .btn-icon:hover { background: var(--border); color: var(--text); }
 
-    /* ── Chat area ────────────────────────────────────────────────────── */
-    #chat-window {
-      flex: 1;
-      overflow-y: auto;
-      padding: 24px 0;
-      scroll-behavior: smooth;
+    /* ── Main two-column layout ───────────────────────────────────────── */
+    .main { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── Chat panel (left) ────────────────────────────────────────────── */
+    .chat-panel {
+      width: var(--chat-w);
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border);
+      background: var(--bg);
     }
-    #chat-window::-webkit-scrollbar { width: 6px; }
-    #chat-window::-webkit-scrollbar-track { background: transparent; }
+
+    #chat-window {
+      flex: 1; overflow-y: auto; padding: 20px 0; scroll-behavior: smooth;
+    }
+    #chat-window::-webkit-scrollbar { width: 5px; }
     #chat-window::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
-    .msg-row {
-      display: flex;
-      gap: 10px;
-      padding: 6px 20px;
-      animation: fadeUp .2s ease;
-    }
+    .msg-row { display: flex; gap: 10px; padding: 5px 16px; animation: fadeUp .2s ease; }
     @keyframes fadeUp {
-      from { opacity: 0; transform: translateY(8px); }
+      from { opacity: 0; transform: translateY(6px); }
       to   { opacity: 1; transform: translateY(0); }
     }
     .msg-row.user { flex-direction: row-reverse; }
 
     .avatar {
-      width: 32px; height: 32px; border-radius: 50%;
-      flex-shrink: 0; display: flex; align-items: center; justify-content: center;
-      font-size: 15px; font-weight: 700;
+      width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; font-weight: 700;
     }
     .avatar.bot  { background: linear-gradient(135deg, var(--accent), #7c3aed); }
-    .avatar.user { background: var(--user-bg); font-size: 13px; }
+    .avatar.user { background: var(--user-bg); font-size: 12px; }
 
     .bubble {
-      max-width: min(520px, 78%);
-      border-radius: var(--radius);
-      padding: 12px 16px;
-      font-size: 14px;
-      line-height: 1.6;
+      max-width: 88%; border-radius: var(--radius);
+      padding: 10px 14px; font-size: 13px; line-height: 1.6;
     }
-    .bubble.bot  { background: var(--bot-bg);  border: 1px solid var(--border); }
+    .bubble.bot  { background: var(--bot-bg); border: 1px solid var(--border); }
     .bubble.user { background: var(--user-bg); }
 
-    /* ── Typing indicator ─────────────────────────────────────────────── */
-    .typing-dots { display: flex; gap: 5px; padding: 4px 0; }
+    .typing-dots { display: flex; gap: 4px; padding: 3px 0; }
     .typing-dots span {
-      width: 7px; height: 7px; background: var(--muted);
-      border-radius: 50%;
+      width: 6px; height: 6px; background: var(--muted); border-radius: 50%;
       animation: bounce 1.2s infinite;
     }
     .typing-dots span:nth-child(2) { animation-delay: .2s; }
     .typing-dots span:nth-child(3) { animation-delay: .4s; }
     @keyframes bounce {
-      0%, 80%, 100% { transform: translateY(0); }
-      40%           { transform: translateY(-6px); }
+      0%,80%,100% { transform: translateY(0); }
+      40%         { transform: translateY(-5px); }
     }
 
-    /* ── Prediction card ──────────────────────────────────────────────── */
+    /* prediction card */
     .prediction-card {
-      margin-top: 14px;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      overflow: hidden;
+      margin-top: 12px; background: var(--surface2);
+      border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
     }
     .card-header {
-      padding: 12px 16px;
-      font-size: 12px;
-      font-weight: 600;
-      letter-spacing: .05em;
-      text-transform: uppercase;
-      color: var(--muted);
+      padding: 10px 14px; font-size: 11px; font-weight: 600;
+      letter-spacing: .05em; text-transform: uppercase; color: var(--muted);
       border-bottom: 1px solid var(--border);
-      display: flex;
-      align-items: center;
-      gap: 8px;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
     }
     .card-header .tag {
-      background: var(--accent-dim);
-      color: #a5b8ff;
-      padding: 2px 8px;
-      border-radius: 20px;
-      font-size: 11px;
+      background: var(--accent-dim); color: #a5b8ff;
+      padding: 2px 7px; border-radius: 20px; font-size: 10px;
     }
-
-    /* stat pills */
-    .stats-row {
-      display: flex;
-      gap: 8px;
-      padding: 12px 16px;
-      flex-wrap: wrap;
-    }
+    .stats-row { display: flex; gap: 6px; padding: 10px 14px; flex-wrap: wrap; }
     .stat-pill {
-      flex: 1;
-      min-width: 80px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 10px 12px;
-      text-align: center;
+      flex: 1; min-width: 70px; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 10px;
+      padding: 8px 10px; text-align: center;
     }
-    .stat-pill .year  { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
-    .stat-pill .prob  { font-size: 20px; font-weight: 700; }
-    .prob.high   { color: var(--green);  }
+    .stat-pill .year { font-size: 10px; color: var(--muted); margin-bottom: 3px; }
+    .stat-pill .prob { font-size: 18px; font-weight: 700; }
+    .prob.high   { color: var(--green); }
     .prob.medium { color: var(--yellow); }
-    .prob.low    { color: var(--red);    }
+    .prob.low    { color: var(--red); }
+    .chart-wrap  { padding: 0 14px 14px; height: 190px; }
 
-    /* chart */
-    .chart-wrap {
-      padding: 0 16px 16px;
-      position: relative;
-      height: 220px;
-    }
-
-    /* ── Input bar ────────────────────────────────────────────────────── */
+    /* input bar */
     #input-area {
-      padding: 14px 20px;
-      background: var(--surface);
+      padding: 12px 16px; background: var(--surface);
       border-top: 1px solid var(--border);
-      display: flex;
-      gap: 10px;
-      align-items: flex-end;
-      flex-shrink: 0;
+      display: flex; gap: 8px; align-items: flex-end; flex-shrink: 0;
     }
     #user-input {
-      flex: 1;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      color: var(--text);
-      border-radius: 12px;
-      padding: 11px 14px;
-      font-size: 14px;
-      resize: none;
-      min-height: 44px;
-      max-height: 120px;
-      overflow-y: auto;
-      outline: none;
-      font-family: var(--font);
-      line-height: 1.5;
-      transition: border-color .15s;
+      flex: 1; background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); border-radius: 10px; padding: 9px 12px;
+      font-size: 13px; resize: none; min-height: 40px; max-height: 110px;
+      overflow-y: auto; outline: none; font-family: var(--font);
+      line-height: 1.5; transition: border-color .15s;
     }
     #user-input:focus { border-color: var(--accent); }
     #user-input::placeholder { color: var(--muted); }
-
     #send-btn {
-      width: 44px; height: 44px;
-      border-radius: 12px;
-      background: var(--accent);
-      border: none;
-      color: #fff;
-      cursor: pointer;
-      display: flex; align-items: center; justify-content: center;
-      flex-shrink: 0;
+      width: 40px; height: 40px; border-radius: 10px; background: var(--accent);
+      border: none; color: #fff; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
       transition: background .15s, transform .1s;
     }
     #send-btn:hover   { background: #3a6aff; }
-    #send-btn:active  { transform: scale(.93); }
+    #send-btn:active  { transform: scale(.92); }
     #send-btn:disabled { background: var(--border); cursor: not-allowed; }
-    #send-btn svg { width: 18px; height: 18px; }
+    #send-btn svg { width: 16px; height: 16px; }
 
-    /* ── Welcome message ──────────────────────────────────────────────── */
+    /* welcome */
     .welcome {
-      text-align: center;
-      padding: 40px 20px;
-      color: var(--muted);
+      text-align: center; padding: 32px 16px; color: var(--muted);
     }
-    .welcome .icon { font-size: 48px; margin-bottom: 12px; }
-    .welcome h2 { font-size: 18px; color: var(--text); margin-bottom: 8px; }
-    .welcome p  { font-size: 14px; max-width: 380px; margin: 0 auto 20px; line-height: 1.6; }
-    .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+    .welcome .icon { font-size: 40px; margin-bottom: 10px; }
+    .welcome h2 { font-size: 16px; color: var(--text); margin-bottom: 6px; }
+    .welcome p  { font-size: 12px; max-width: 300px; margin: 0 auto 16px; line-height: 1.6; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
     .chip {
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      color: var(--text);
-      border-radius: 20px;
-      padding: 7px 14px;
-      font-size: 13px;
-      cursor: pointer;
-      transition: all .15s;
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); border-radius: 20px; padding: 5px 12px;
+      font-size: 12px; cursor: pointer; transition: all .15s;
     }
     .chip:hover { background: var(--accent-dim); border-color: var(--accent); }
+
+    /* ── Map panel (right) ────────────────────────────────────────────── */
+    .map-panel { flex: 1; position: relative; overflow: hidden; }
+
+    #map { width: 100%; height: 100%; }
+
+    /* Leaflet overrides for dark theme */
+    .leaflet-control-zoom a { background: var(--surface2) !important; color: var(--text) !important; border-color: var(--border) !important; }
+    .leaflet-control-attribution { background: rgba(15,17,23,.7) !important; color: var(--muted) !important; font-size: 10px !important; }
+    .leaflet-control-attribution a { color: var(--accent) !important; }
+
+    /* Map legend */
+    .map-legend {
+      position: absolute; bottom: 24px; right: 12px; z-index: 1000;
+      background: rgba(26,29,39,.92); border: 1px solid var(--border);
+      border-radius: 10px; padding: 10px 14px; font-size: 11px;
+      backdrop-filter: blur(6px);
+    }
+    .map-legend h4 { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+    .legend-item { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; color: var(--text); }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+    /* Map counter badge */
+    .map-badge {
+      position: absolute; top: 12px; left: 12px; z-index: 1000;
+      background: rgba(26,29,39,.92); border: 1px solid var(--border);
+      border-radius: 8px; padding: 6px 12px; font-size: 12px; color: var(--muted);
+      backdrop-filter: blur(6px);
+    }
+    .map-badge span { color: var(--text); font-weight: 600; }
+
+    /* Custom tooltip */
+    .biz-tooltip {
+      position: fixed; z-index: 9999; pointer-events: none;
+      background: rgba(26,29,39,.96); border: 1px solid var(--border);
+      border-radius: 10px; padding: 10px 13px; font-size: 12px;
+      max-width: 240px; line-height: 1.5; backdrop-filter: blur(8px);
+      box-shadow: 0 4px 24px rgba(0,0,0,.5);
+      display: none;
+    }
+    .biz-tooltip .biz-name { font-weight: 600; color: var(--text); margin-bottom: 4px; }
+    .biz-tooltip .biz-addr { color: var(--muted); font-size: 11px; margin-bottom: 6px; }
+    .biz-tooltip .biz-tag  { display: inline-block; padding: 2px 7px; border-radius: 20px; font-size: 10px; font-weight: 600; margin-bottom: 4px; }
+    .biz-tooltip .biz-year { color: var(--muted); font-size: 11px; }
+
+    /* Responsive: stack on small screens */
+    @media (max-width: 700px) {
+      .main { flex-direction: column; }
+      .chat-panel { width: 100%; height: 55%; border-right: none; border-bottom: 1px solid var(--border); }
+      .map-panel  { height: 45%; }
+      :root { --chat-w: 100%; }
+    }
   </style>
 </head>
 <body>
@@ -257,58 +248,178 @@
   <div class="logo">🏙️</div>
   <div>
     <h1>Chicago Business Survival</h1>
-    <p>Cox Proportional Hazards · Business License Data 2002–2026</p>
+    <p>Cox PH Model · ACS 2022 · Business Licenses 2002–2026</p>
   </div>
   <div class="header-right">
     <button class="btn-icon" onclick="newChat()">New chat ↺</button>
   </div>
 </header>
 
-<!-- ── Chat window ─────────────────────────────────────────────────────── -->
-<div id="chat-window">
-  <div id="welcome" class="welcome">
-    <div class="icon">📊</div>
-    <h2>How long will your business last?</h2>
-    <p>Tell me what kind of business you're opening and where in Chicago — I'll predict your survival curve using real license data.</p>
-    <div class="chips">
-      <div class="chip" onclick="sendChip(this)">I want to open a restaurant in Wicker Park</div>
-      <div class="chip" onclick="sendChip(this)">Tavern in the Loop</div>
-      <div class="chip" onclick="sendChip(this)">Home repair business in Logan Square</div>
-      <div class="chip" onclick="sendChip(this)">Tobacco shop in Uptown</div>
+<!-- ── Main layout ─────────────────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- Chat panel -->
+  <div class="chat-panel">
+    <div id="chat-window">
+      <div id="welcome" class="welcome">
+        <div class="icon">📊</div>
+        <h2>How long will your business last?</h2>
+        <p>Tell me what kind of business you're opening and where in Chicago.</p>
+        <div class="chips">
+          <div class="chip" onclick="sendChip(this)">Restaurant in Wicker Park</div>
+          <div class="chip" onclick="sendChip(this)">Tavern in the Loop</div>
+          <div class="chip" onclick="sendChip(this)">Home repair in Logan Square</div>
+          <div class="chip" onclick="sendChip(this)">Tobacco shop in Uptown</div>
+        </div>
+      </div>
+    </div>
+    <div id="input-area">
+      <textarea id="user-input" rows="1" placeholder="Describe your business plan…" maxlength="500"></textarea>
+      <button id="send-btn" onclick="sendMessage()" title="Send">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"></line>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+        </svg>
+      </button>
     </div>
   </div>
+
+  <!-- Map panel -->
+  <div class="map-panel">
+    <div id="map"></div>
+    <div class="map-badge">Active businesses: <span id="biz-count">loading…</span></div>
+    <div class="map-legend" id="map-legend">
+      <h4>License Type</h4>
+    </div>
+  </div>
+
 </div>
 
-<!-- ── Input area ──────────────────────────────────────────────────────── -->
-<div id="input-area">
-  <textarea id="user-input" rows="1" placeholder="Describe your business plan…" maxlength="500"></textarea>
-  <button id="send-btn" onclick="sendMessage()" title="Send">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-         stroke-linecap="round" stroke-linejoin="round">
-      <line x1="22" y1="2" x2="11" y2="13"></line>
-      <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-    </svg>
-  </button>
+<!-- Hover tooltip -->
+<div class="biz-tooltip" id="biz-tooltip">
+  <div class="biz-name" id="tt-name"></div>
+  <div class="biz-addr" id="tt-addr"></div>
+  <span class="biz-tag"  id="tt-tag"></span>
+  <div class="biz-year" id="tt-year"></div>
 </div>
 
 <script>
 // ─────────────────────────────────────────────────────────────────────────────
-// CONFIG — update API_URL after deploying your backend to Render
+// CONFIG — update after deploying backend to Render
 // ─────────────────────────────────────────────────────────────────────────────
 const CONFIG = {
   API_URL: "https://chicago-bussiness-longevity.onrender.com",
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// State
+// License type colors
 // ─────────────────────────────────────────────────────────────────────────────
-let sessionId = null;
-let chartInstances = {};
-let chartCounter = 0;
+const LICENSE_COLORS = {
+  "Retail Food Establishment":                  "#f97316",
+  "Limited Business License":                   "#3b82f6",
+  "Tavern":                                     "#a855f7",
+  "Regulated Business License":                 "#14b8a6",
+  "Tobacco":                                    "#eab308",
+  "Home Occupation":                            "#22c55e",
+  "Home Repair":                                "#84cc16",
+  "Consumption on Premises - Incidental Activity": "#ec4899",
+  "Package Goods":                              "#ef4444",
+  "Manufacturing Establishments":               "#94a3b8",
+};
+const DEFAULT_COLOR = "#64748b";
+
+function licenseColor(t) { return LICENSE_COLORS[t] || DEFAULT_COLOR; }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DOM helpers
+// Leaflet map
 // ─────────────────────────────────────────────────────────────────────────────
+const map = L.map("map", {
+  center: [41.85, -87.65],
+  zoom: 11,
+  zoomControl: true,
+  preferCanvas: true,
+});
+
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  attribution: '&copy; <a href="https://carto.com/">CARTO</a>',
+  subdomains: "abcd",
+  maxZoom: 19,
+}).addTo(map);
+
+const renderer = L.canvas({ padding: 0.5 });
+const tooltip  = document.getElementById("biz-tooltip");
+
+// Build legend
+function buildLegend() {
+  const leg = document.getElementById("map-legend");
+  Object.entries(LICENSE_COLORS).forEach(([name, color]) => {
+    const item = document.createElement("div");
+    item.className = "legend-item";
+    item.innerHTML = `<div class="legend-dot" style="background:${color}"></div>${name}`;
+    leg.appendChild(item);
+  });
+}
+buildLegend();
+
+// Load businesses.json and plot
+fetch("businesses.json")
+  .then(r => r.ok ? r.json() : Promise.reject(r.status))
+  .then(data => {
+    document.getElementById("biz-count").textContent = data.length.toLocaleString();
+
+    data.forEach(biz => {
+      const color = licenseColor(biz.t);
+      const circle = L.circleMarker([biz.lat, biz.lng], {
+        renderer,
+        radius:      4,
+        fillColor:   color,
+        fillOpacity: 0.75,
+        color:       color,
+        weight:      0,
+      }).addTo(map);
+
+      circle.on("mouseover", function(e) {
+        const tt = document.getElementById("biz-tooltip");
+        document.getElementById("tt-name").textContent = biz.n || "Unknown";
+        document.getElementById("tt-addr").textContent = biz.a || "";
+        const tag = document.getElementById("tt-tag");
+        tag.textContent    = biz.t;
+        tag.style.background = color + "33";
+        tag.style.color      = color;
+        document.getElementById("tt-year").textContent =
+          biz.y ? `Opened ${biz.y}` : "";
+        tt.style.display = "block";
+        moveTooltip(e.originalEvent);
+      });
+
+      circle.on("mousemove", e => moveTooltip(e.originalEvent));
+      circle.on("mouseout",  ()  => { tooltip.style.display = "none"; });
+    });
+  })
+  .catch(err => {
+    document.getElementById("biz-count").textContent = "unavailable";
+    console.warn("businesses.json not loaded:", err);
+  });
+
+function moveTooltip(e) {
+  const tt = document.getElementById("biz-tooltip");
+  const pad = 14;
+  let x = e.clientX + pad;
+  let y = e.clientY + pad;
+  if (x + 260 > window.innerWidth)  x = e.clientX - 260 - pad;
+  if (y + 120 > window.innerHeight) y = e.clientY - 120 - pad;
+  tt.style.left = x + "px";
+  tt.style.top  = y + "px";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chat state
+// ─────────────────────────────────────────────────────────────────────────────
+let sessionId     = null;
+let chartInstances = {};
+let chartCounter   = 0;
+
 const chatWindow = document.getElementById("chat-window");
 const input      = document.getElementById("user-input");
 const sendBtn    = document.getElementById("send-btn");
@@ -317,31 +428,25 @@ function hideWelcome() {
   const w = document.getElementById("welcome");
   if (w) w.remove();
 }
+function scrollBottom() { chatWindow.scrollTop = chatWindow.scrollHeight; }
 
-function scrollBottom() {
-  chatWindow.scrollTop = chatWindow.scrollHeight;
-}
-
-// Auto-grow textarea
 input.addEventListener("input", () => {
   input.style.height = "auto";
-  input.style.height = Math.min(input.scrollHeight, 120) + "px";
+  input.style.height = Math.min(input.scrollHeight, 110) + "px";
 });
-
-input.addEventListener("keydown", (e) => {
+input.addEventListener("keydown", e => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Append message bubbles
+// Message rendering
 // ─────────────────────────────────────────────────────────────────────────────
 function appendUserBubble(text) {
   hideWelcome();
   const row = document.createElement("div");
   row.className = "msg-row user";
-  row.innerHTML = `
-    <div class="avatar user">You</div>
-    <div class="bubble user">${escHtml(text)}</div>`;
+  row.innerHTML = `<div class="avatar user">You</div>
+                   <div class="bubble user">${escHtml(text)}</div>`;
   chatWindow.appendChild(row);
   scrollBottom();
 }
@@ -351,14 +456,10 @@ function appendTyping() {
   const row = document.createElement("div");
   row.className = "msg-row";
   row.id = "typing-row";
-  row.innerHTML = `
-    <div class="avatar bot">🤖</div>
-    <div class="bubble bot">
-      <div class="typing-dots"><span></span><span></span><span></span></div>
-    </div>`;
+  row.innerHTML = `<div class="avatar bot">🤖</div>
+    <div class="bubble bot"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
   chatWindow.appendChild(row);
   scrollBottom();
-  return row;
 }
 
 function removeTyping() {
@@ -369,25 +470,22 @@ function removeTyping() {
 function appendBotText(text) {
   const row = document.createElement("div");
   row.className = "msg-row";
-  row.innerHTML = `
-    <div class="avatar bot">🤖</div>
-    <div class="bubble bot">${formatText(text)}</div>`;
+  row.innerHTML = `<div class="avatar bot">🤖</div>
+                   <div class="bubble bot">${formatText(text)}</div>`;
   chatWindow.appendChild(row);
   scrollBottom();
 }
 
 function appendBotPrediction(text, prediction, meta) {
-  const id = "chart-" + (++chartCounter);
+  const id  = "chart-" + (++chartCounter);
+  const y1  = prediction.year_1, y3 = prediction.year_3;
+  const y5  = prediction.year_5, y10 = prediction.year_10;
   const row = document.createElement("div");
   row.className = "msg-row";
-
-  const y1 = prediction.year_1, y3 = prediction.year_3;
-  const y5 = prediction.year_5, y10 = prediction.year_10;
-
   row.innerHTML = `
     <div class="avatar bot">🤖</div>
-    <div class="bubble bot" style="max-width:min(580px,90%)">
-      <div style="margin-bottom:12px">${formatText(text)}</div>
+    <div class="bubble bot" style="max-width:96%">
+      <div style="margin-bottom:10px">${formatText(text)}</div>
       <div class="prediction-card">
         <div class="card-header">
           Survival Forecast
@@ -397,87 +495,66 @@ function appendBotPrediction(text, prediction, meta) {
           ${statPill("1 Year",  y1)}
           ${statPill("3 Years", y3)}
           ${statPill("5 Years", y5)}
-          ${statPill("10 Years",y10)}
+          ${statPill("10 Yrs",  y10)}
         </div>
-        <div class="chart-wrap">
-          <canvas id="${id}"></canvas>
-        </div>
+        <div class="chart-wrap"><canvas id="${id}"></canvas></div>
       </div>
     </div>`;
   chatWindow.appendChild(row);
   scrollBottom();
   drawChart(id, prediction.curve);
+
+  // Pan map to predicted location
+  if (meta.lat && meta.lon) {
+    map.flyTo([meta.lat, meta.lon], 14, { duration: 1.2 });
+    L.circleMarker([meta.lat, meta.lon], {
+      radius: 10, color: "#fff", weight: 2,
+      fillColor: "#4f7eff", fillOpacity: 0.9,
+    }).addTo(map).bindPopup(`<b>Predicted location</b><br>${escHtml(meta.license_type)}`).openPopup();
+  }
 }
 
 function statPill(label, prob) {
-  const pct  = Math.round(prob * 100);
-  const cls  = pct >= 60 ? "high" : pct >= 35 ? "medium" : "low";
+  const pct = Math.round(prob * 100);
+  const cls = pct >= 60 ? "high" : pct >= 35 ? "medium" : "low";
   return `<div class="stat-pill">
     <div class="year">${label}</div>
     <div class="prob ${cls}">${pct}%</div>
   </div>`;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Chart
-// ─────────────────────────────────────────────────────────────────────────────
 function drawChart(canvasId, curveData) {
   const ctx = document.getElementById(canvasId).getContext("2d");
-  const labels = curveData.map(d => d.t);
-  const data   = curveData.map(d => +(d.p * 100).toFixed(1));
-
-  const gradient = ctx.createLinearGradient(0, 0, 0, 200);
-  gradient.addColorStop(0,   "rgba(79,126,255,0.35)");
-  gradient.addColorStop(1,   "rgba(79,126,255,0.02)");
-
+  const grad = ctx.createLinearGradient(0, 0, 0, 180);
+  grad.addColorStop(0,   "rgba(79,126,255,.35)");
+  grad.addColorStop(1,   "rgba(79,126,255,.02)");
   chartInstances[canvasId] = new Chart(ctx, {
     type: "line",
     data: {
-      labels,
+      labels: curveData.map(d => d.t),
       datasets: [{
-        label: "Survival probability",
-        data,
-        borderColor: "#4f7eff",
-        backgroundColor: gradient,
-        borderWidth: 2.5,
-        pointRadius: 0,
-        pointHoverRadius: 5,
-        fill: true,
-        tension: 0.35,
+        data: curveData.map(d => +(d.p * 100).toFixed(1)),
+        borderColor: "#4f7eff", backgroundColor: grad,
+        borderWidth: 2, pointRadius: 0, fill: true, tension: 0.35,
       }],
     },
     options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: { duration: 600, easing: "easeOutQuart" },
-      interaction: { mode: "index", intersect: false },
+      responsive: true, maintainAspectRatio: false,
+      animation: { duration: 500 },
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: "#1a1d27",
-          borderColor: "#2e3354",
-          borderWidth: 1,
-          titleColor: "#7b82a8",
-          bodyColor: "#e8eaf0",
+          backgroundColor: "#1a1d27", borderColor: "#2e3354", borderWidth: 1,
+          titleColor: "#7b82a8", bodyColor: "#e8eaf0",
           callbacks: {
-            title: items => `Year ${items[0].label}`,
-            label: item  => ` ${item.raw}% still open`,
+            title: i => `Year ${i[0].label}`,
+            label: i => ` ${i.raw}% still open`,
           },
         },
       },
       scales: {
-        x: {
-          grid: { color: "rgba(46,51,84,.5)" },
-          ticks: { color: "#7b82a8", maxTicksLimit: 8,
-                   callback: v => `Yr ${labels[v]}` },
-          border: { color: "#2e3354" },
-        },
-        y: {
-          min: 0, max: 100,
-          grid: { color: "rgba(46,51,84,.5)" },
-          ticks: { color: "#7b82a8", callback: v => v + "%" },
-          border: { color: "#2e3354" },
-        },
+        x: { grid: { color: "rgba(46,51,84,.5)" }, ticks: { color: "#7b82a8", maxTicksLimit: 7, callback: v => `Yr ${curveData[v]?.t}` }, border: { color: "#2e3354" } },
+        y: { min: 0, max: 100, grid: { color: "rgba(46,51,84,.5)" }, ticks: { color: "#7b82a8", callback: v => v + "%" }, border: { color: "#2e3354" } },
       },
     },
   });
@@ -489,13 +566,12 @@ function drawChart(canvasId, curveData) {
 async function sendMessage() {
   const text = input.value.trim();
   if (!text) return;
-
   input.value = "";
   input.style.height = "auto";
   sendBtn.disabled = true;
 
   appendUserBubble(text);
-  const typingRow = appendTyping();
+  appendTyping();
 
   try {
     const res = await fetch(`${CONFIG.API_URL}/chat`, {
@@ -503,13 +579,10 @@ async function sendMessage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: text, session_id: sessionId }),
     });
-
-    if (!res.ok) throw new Error(`Server error ${res.status}`);
+    if (!res.ok) throw new Error(`Server ${res.status}`);
     const data = await res.json();
-
     sessionId = data.session_id;
     removeTyping();
-
     if (data.type === "prediction") {
       appendBotPrediction(data.message, data.prediction, data.meta);
     } else {
@@ -517,7 +590,7 @@ async function sendMessage() {
     }
   } catch (err) {
     removeTyping();
-    appendBotText("⚠️ Could not reach the backend. Make sure the API_URL in the script is set to your Render deployment URL.");
+    appendBotText("⚠️ Could not reach the backend. Check that the Render service is live.");
     console.error(err);
   } finally {
     sendBtn.disabled = false;
@@ -525,10 +598,7 @@ async function sendMessage() {
   }
 }
 
-function sendChip(el) {
-  input.value = el.textContent;
-  sendMessage();
-}
+function sendChip(el) { input.value = el.textContent; sendMessage(); }
 
 async function newChat() {
   if (sessionId) {
@@ -548,11 +618,11 @@ async function newChat() {
     <div id="welcome" class="welcome">
       <div class="icon">📊</div>
       <h2>How long will your business last?</h2>
-      <p>Tell me what kind of business you're opening and where in Chicago — I'll predict your survival curve using real license data.</p>
+      <p>Tell me what kind of business you're opening and where in Chicago.</p>
       <div class="chips">
-        <div class="chip" onclick="sendChip(this)">I want to open a restaurant in Wicker Park</div>
+        <div class="chip" onclick="sendChip(this)">Restaurant in Wicker Park</div>
         <div class="chip" onclick="sendChip(this)">Tavern in the Loop</div>
-        <div class="chip" onclick="sendChip(this)">Home repair business in Logan Square</div>
+        <div class="chip" onclick="sendChip(this)">Home repair in Logan Square</div>
         <div class="chip" onclick="sendChip(this)">Tobacco shop in Uptown</div>
       </div>
     </div>`;
@@ -562,9 +632,9 @@ async function newChat() {
 // Utilities
 // ─────────────────────────────────────────────────────────────────────────────
 function escHtml(s) {
-  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  return String(s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 }
-
 function formatText(s) {
   return escHtml(s)
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")

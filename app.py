@@ -2,6 +2,8 @@ import uuid
 import json
 import os
 import pickle
+import math
+import ast
 
 import numpy as np
 import pandas as pd
@@ -93,9 +95,10 @@ Supported license types:
 Chicago neighborhoods you know: {", ".join(NEIGHBORHOODS.keys())}
 
 Rules:
+- If the user gives raw coordinates (e.g. "41.87, -87.66"), use them directly as latitude and longitude.
 - If the user mentions a neighborhood not in your list, pick the geographically nearest one you know.
 - If they give a street address, estimate coordinates from the Chicago street grid (State & Madison = 41.8819, -87.6278; each city block ≈ 0.011 degrees).
-- Once you have BOTH location and license type, call predict_business_survival immediately — do not ask for confirmation.
+- Once you have BOTH location and license type, call predict_business_survival immediately.
 - If you only have one piece of information, ask for the other in one friendly sentence.
 - Keep all conversational responses under 2 sentences."""
 
@@ -121,12 +124,8 @@ TOOLS = [
                         "enum": LICENSE_TYPES,
                         "description": "Business license type",
                     },
-                    "zip_code": {
-                        "type": "integer",
-                        "description": "Chicago ZIP code of the business location (e.g. 60601)",
-                    },
                 },
-                "required": ["latitude", "longitude", "license_type", "zip_code"],
+                "required": ["latitude", "longitude", "license_type"],
             },
         },
     }
@@ -157,6 +156,77 @@ def _load_acs() -> dict:
 ACS_LOOKUP: dict = _load_acs()
 _IL_MEDIAN_RENT   = float(pd.Series([v[0] for v in ACS_LOOKUP.values() if v[0]]).median()) if ACS_LOOKUP else 1050.0
 _IL_MEDIAN_INCOME = float(pd.Series([v[1] for v in ACS_LOOKUP.values() if v[1]]).median()) if ACS_LOOKUP else 72000.0
+
+# ---------------------------------------------------------------------------
+# Load enriched business data for nearby-context analysis
+# ---------------------------------------------------------------------------
+_CSV_PATH = os.path.join(os.path.dirname(__file__), "chicago_licenses_enriched.csv")
+
+def _load_biz_df():
+    try:
+        df = pd.read_csv(_CSV_PATH, low_memory=False)
+        df = df.dropna(subset=["LATITUDE", "LONGITUDE"])
+        # Normalise column names — handle both LEGAL_NAME and LEGAL NAME
+        df.columns = [c.strip().replace(" ", "_") for c in df.columns]
+        print(f"[BIZ_DF] Loaded {len(df):,} rows. Columns: {list(df.columns)}")
+        return df
+    except Exception as e:
+        print(f"[BIZ_DF] Failed to load CSV: {e}")
+        return pd.DataFrame()
+
+BIZ_DF: pd.DataFrame = _load_biz_df()
+print(f"[BIZ_DF] {'Ready' if not BIZ_DF.empty else 'EMPTY — context analysis disabled'}")
+
+def _haversine_km(lat1, lon1, lat2, lon2):
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    return R * 2 * math.asin(math.sqrt(a))
+
+def get_nearby_context(lat: float, lon: float, license_type: str,
+                       radius_km: float = 1.5, max_each: int = 5) -> dict:
+    if BIZ_DF.empty:
+        return {"active": [], "closed": []}
+
+    dlat = radius_km / 111.0
+    dlon = radius_km / (111.0 * math.cos(math.radians(lat)))
+
+    col_licenses = next((c for c in BIZ_DF.columns if "LICENSE" in c.upper() and "ALL" in c.upper()), None)
+    col_name     = next((c for c in BIZ_DF.columns if "LEGAL" in c.upper() and "NAME" in c.upper()), None)
+    col_addr     = next((c for c in BIZ_DF.columns if "ADDRESS" in c.upper()), None)
+
+    license_mask = (
+        BIZ_DF[col_licenses].astype(str).str.contains(license_type, regex=False, na=False)
+        if col_licenses else pd.Series(True, index=BIZ_DF.index)
+    )
+
+    box = BIZ_DF[
+        BIZ_DF["LATITUDE"].between(lat - dlat, lat + dlat) &
+        BIZ_DF["LONGITUDE"].between(lon - dlon, lon + dlon) &
+        license_mask
+    ].copy()
+
+    if box.empty:
+        return {"active": [], "closed": []}
+
+    box["dist_km"] = box.apply(
+        lambda r: _haversine_km(lat, lon, r["LATITUDE"], r["LONGITUDE"]), axis=1
+    )
+    box = box[box["dist_km"] <= radius_km].sort_values("dist_km")
+
+    def fmt(r):
+        return {
+            "name":    str(r[col_name])[:40] if col_name else "Unknown",
+            "address": str(r[col_addr])      if col_addr else "",
+            "years":   round(float(r["duration"]), 1),
+            "dist_km": round(float(r["dist_km"]), 2),
+        }
+
+    active = [fmt(r) for _, r in box[box["event"] == 0].head(max_each).iterrows()]
+    closed = [fmt(r) for _, r in box[box["event"] == 1].head(max_each).iterrows()]
+    print(f"[context] {len(active)} active, {len(closed)} closed within {radius_km}km")
+    return {"active": active, "closed": closed}
 
 # In-memory session store (sufficient for a demo)
 sessions: dict = {}
@@ -233,6 +303,7 @@ def chat():
         inp = json.loads(tool_call.function.arguments)
 
         prediction = run_prediction(inp["latitude"], inp["longitude"], inp["license_type"], inp.get("zip_code", 0))
+        context    = get_nearby_context(inp["latitude"], inp["longitude"], inp["license_type"])
 
         # Add assistant's tool call to history
         history.append({
@@ -248,17 +319,36 @@ def chat():
             }],
         })
 
-        # Add tool result
+        # Tool result includes prediction + nearby context
         history.append({
             "role": "tool",
             "tool_call_id": tool_call.id,
-            "content": json.dumps(prediction),
+            "content": json.dumps({**prediction, "nearby_context": context}),
         })
 
-        # Get Claude's final narrative response
+        # Build analysis system prompt
+        has_context = bool(context["active"] or context["closed"])
+        if has_context:
+            n_active = len(context["active"])
+            n_closed = len(context["closed"])
+            analysis_suffix = f"""
+
+IMPORTANT: The tool result contains a "nearby_context" field with {n_active} active competitors and {n_closed} closed businesses within 1.5 km that share the same license type. You MUST include this local market analysis in your response:
+1. Start with the survival probability summary (1 sentence).
+2. Then describe the nearby ACTIVE competitors — name the closest one and how long it has been open.
+3. Then describe the nearby CLOSED businesses — mention how quickly the shortest-lived one failed.
+Use specific business names and addresses from the data. Total response: 4–6 sentences."""
+        else:
+            analysis_suffix = ""
+
+        analysis_messages = (
+            [{"role": "system", "content": SYSTEM_PROMPT + analysis_suffix}]
+            + history[1:]
+        )
+
         final = client.chat.completions.create(
             model="gpt-4o",
-            messages=history,
+            messages=analysis_messages,
             tools=TOOLS,
             tool_choice="none",
         )
@@ -270,6 +360,7 @@ def chat():
             "type": "prediction",
             "message": final_text,
             "prediction": prediction,
+            "context": context,
             "meta": {
                 "license_type": inp["license_type"],
                 "lat": inp["latitude"],
@@ -297,6 +388,16 @@ def reset():
         del sessions[sid]
     return jsonify({"status": "ok"})
 
+
+@app.route("/debug", methods=["GET"])
+def debug():
+    return jsonify({
+        "biz_df_rows": len(BIZ_DF),
+        "biz_df_columns": list(BIZ_DF.columns) if not BIZ_DF.empty else [],
+        "acs_zips_loaded": len(ACS_LOOKUP),
+        "csv_path": _CSV_PATH,
+        "csv_exists": os.path.exists(_CSV_PATH),
+    })
 
 @app.route("/health", methods=["GET"])
 def health():

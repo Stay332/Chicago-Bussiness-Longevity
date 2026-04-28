@@ -147,6 +147,31 @@
     .prob.low    { color: var(--red); }
     .chart-wrap  { padding: 0 14px 14px; height: 190px; }
 
+    /* Nearby context cards */
+    .context-card {
+      margin-top: 8px; border-radius: var(--radius);
+      border: 1px solid var(--border); overflow: hidden; font-size: 12px;
+    }
+    .context-card .ctx-header {
+      padding: 8px 13px; font-size: 10px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .06em;
+      display: flex; align-items: center; gap: 7px;
+    }
+    .ctx-header.active-hdr { background: rgba(34,197,94,.1);  color: var(--green); }
+    .ctx-header.closed-hdr { background: rgba(239,68,68,.1);  color: var(--red); }
+    .ctx-biz {
+      display: flex; align-items: baseline; justify-content: space-between;
+      padding: 6px 13px; border-top: 1px solid var(--border); gap: 8px;
+    }
+    .ctx-biz:first-of-type { border-top: none; }
+    .ctx-biz-left  { flex: 1; min-width: 0; }
+    .ctx-biz-name  { font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ctx-biz-addr  { color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ctx-biz-right { flex-shrink: 0; text-align: right; color: var(--muted); font-size: 11px; }
+    .ctx-biz-right .yrs { font-weight: 600; font-size: 13px; }
+    .ctx-biz-right .yrs.active { color: var(--green); }
+    .ctx-biz-right .yrs.closed { color: var(--red); }
+
     /* input bar */
     #input-area {
       padding: 12px 16px; background: var(--surface);
@@ -497,8 +522,7 @@ fetch("businesses.json")
 // Click anywhere on the map → paste coordinates into input
 function fillCoords(lat, lng) {
   const inputEl = document.getElementById("user-input");
-  const coords  = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-  // Insert at cursor position if input already has text, else replace
+  const coords  = `at (${lat.toFixed(5)}, ${lng.toFixed(5)})`;
   if (inputEl.value.trim()) {
     const pos = inputEl.selectionStart;
     inputEl.value = inputEl.value.slice(0, pos) + coords + inputEl.value.slice(pos);
@@ -586,10 +610,34 @@ function appendBotText(text) {
   scrollBottom();
 }
 
-function appendBotPrediction(text, prediction, meta) {
+function contextCard(list, type) {
+  if (!list || list.length === 0) return "";
+  const isActive = type === "active";
+  const icon  = isActive ? "🟢" : "🔴";
+  const label = isActive ? "Nearby Competitors (still open)" : "Nearby Failures (closed)";
+  const rows  = list.map(b => `
+    <div class="ctx-biz">
+      <div class="ctx-biz-left">
+        <div class="ctx-biz-name">${escHtml(b.name)}</div>
+        <div class="ctx-biz-addr">${escHtml(b.address)} · ${b.dist_km} km away</div>
+      </div>
+      <div class="ctx-biz-right">
+        <div class="yrs ${type}">${b.years} yrs</div>
+        <div>${isActive ? "open" : "lasted"}</div>
+      </div>
+    </div>`).join("");
+  return `
+    <div class="context-card">
+      <div class="ctx-header ${isActive ? "active-hdr" : "closed-hdr"}">${icon} ${label}</div>
+      ${rows}
+    </div>`;
+}
+
+function appendBotPrediction(text, prediction, meta, context) {
   const id  = "chart-" + (++chartCounter);
   const y1  = prediction.year_1, y3 = prediction.year_3;
   const y5  = prediction.year_5, y10 = prediction.year_10;
+  const ctx = context || { active: [], closed: [] };
   const row = document.createElement("div");
   row.className = "msg-row";
   row.innerHTML = `
@@ -609,6 +657,8 @@ function appendBotPrediction(text, prediction, meta) {
         </div>
         <div class="chart-wrap"><canvas id="${id}"></canvas></div>
       </div>
+      ${contextCard(ctx.active, "active")}
+      ${contextCard(ctx.closed, "closed")}
     </div>`;
   chatWindow.appendChild(row);
   scrollBottom();
@@ -695,7 +745,7 @@ async function sendMessage() {
     sessionId = data.session_id;
     removeTyping();
     if (data.type === "prediction") {
-      appendBotPrediction(data.message, data.prediction, data.meta);
+      appendBotPrediction(data.message, data.prediction, data.meta, data.context);
     } else {
       appendBotText(data.message);
     }

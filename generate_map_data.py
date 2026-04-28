@@ -26,14 +26,15 @@ print(f"Active businesses: {len(df):,}")
 df = df.dropna(subset=["LATITUDE", "LONGITUDE"])
 
 # Parse ALL_LICENSES (stored as string repr of a Python list in CSV)
-def primary_license(val):
+def parse_licenses(val):
     try:
-        licenses = ast.literal_eval(str(val))
-        return licenses[0] if licenses else "Unknown"
+        result = ast.literal_eval(str(val))
+        return result if isinstance(result, list) and result else ["Unknown"]
     except Exception:
-        return str(val)
+        return [str(val)]
 
-df["PRIMARY_LICENSE"] = df["ALL_LICENSES"].apply(primary_license)
+df["ALL_LICENSES_PARSED"] = df["ALL_LICENSES"].apply(parse_licenses)
+df["PRIMARY_LICENSE"]     = df["ALL_LICENSES_PARSED"].apply(lambda x: x[0])
 
 # Extract start year
 df["START_YEAR"] = pd.to_datetime(df["MIN_START_DATE"], errors="coerce").dt.year
@@ -50,10 +51,12 @@ records = []
 for _, row in df.iterrows():
     name = str(row.get("LEGAL_NAME", "")).strip()[:45] or "Unknown"
     addr = str(row.get("ADDRESS", "")).strip()
+    all_types = row["ALL_LICENSES_PARSED"]
     records.append({
         "n":   name,
         "a":   addr,
-        "t":   str(row["PRIMARY_LICENSE"]),
+        "t":   str(row["PRIMARY_LICENSE"]),   # primary — used for dot color
+        "ts":  all_types,                     # all types — used for tooltip & filter
         "y":   int(row["START_YEAR"]) if row["START_YEAR"] > 0 else None,
         "lat": round(float(row["LATITUDE"]),  5),
         "lng": round(float(row["LONGITUDE"]), 5),

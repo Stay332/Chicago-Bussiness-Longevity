@@ -206,8 +206,18 @@
       backdrop-filter: blur(6px);
     }
     .map-legend h4 { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
-    .legend-item { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; color: var(--text); }
-    .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .legend-item {
+      display: flex; align-items: center; gap: 7px; margin-bottom: 5px;
+      color: var(--text); cursor: pointer; border-radius: 6px;
+      padding: 3px 6px; margin-left: -6px;
+      transition: background .12s, opacity .12s;
+      user-select: none;
+    }
+    .legend-item:hover { background: rgba(255,255,255,.06); }
+    .legend-item.hidden { opacity: .35; }
+    .legend-item.hidden .legend-label { text-decoration: line-through; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; transition: opacity .12s; }
+    .legend-eye { font-size: 11px; margin-left: auto; padding-left: 6px; color: var(--muted); }
 
     /* Map counter badge */
     .map-badge {
@@ -217,6 +227,7 @@
       backdrop-filter: blur(6px);
     }
     .map-badge span { color: var(--text); font-weight: 600; }
+    .map-badge .hint { font-size: 10px; color: var(--muted); margin-top: 2px; }
 
     /* Custom tooltip */
     .biz-tooltip {
@@ -288,7 +299,10 @@
   <!-- Map panel -->
   <div class="map-panel">
     <div id="map"></div>
-    <div class="map-badge">Active businesses: <span id="biz-count">loading…</span></div>
+    <div class="map-badge">
+      Active businesses: <span id="biz-count">loading…</span>
+      <div class="hint">Click map to copy coordinates</div>
+    </div>
     <div class="map-legend" id="map-legend">
       <h4>License Type</h4>
     </div>
@@ -350,16 +364,58 @@ L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
 const renderer = L.canvas({ padding: 0.5 });
 const tooltip  = document.getElementById("biz-tooltip");
 
-// Build legend
+// Marker storage: license type → array of CircleMarker
+const layerGroups = {};
+const hiddenTypes = new Set();
+
+// Build legend with toggle
 function buildLegend() {
   const leg = document.getElementById("map-legend");
   Object.entries(LICENSE_COLORS).forEach(([name, color]) => {
+    layerGroups[name] = [];
     const item = document.createElement("div");
     item.className = "legend-item";
-    item.innerHTML = `<div class="legend-dot" style="background:${color}"></div>${name}`;
+    item.dataset.type = name;
+    item.innerHTML = `
+      <div class="legend-dot" style="background:${color}"></div>
+      <span class="legend-label">${name}</span>
+      <span class="legend-eye">👁</span>`;
+    item.addEventListener("click", () => toggleType(name, item));
     leg.appendChild(item);
   });
 }
+
+function toggleType(type, itemEl) {
+  if (hiddenTypes.has(type)) {
+    hiddenTypes.delete(type);
+    itemEl.classList.remove("hidden");
+    itemEl.querySelector(".legend-eye").textContent = "👁";
+  } else {
+    hiddenTypes.add(type);
+    itemEl.classList.add("hidden");
+    itemEl.querySelector(".legend-eye").textContent = "🚫";
+  }
+
+  // A dot is visible if at least ONE of its types is not hidden
+  const affected = new Set(layerGroups[type] || []);
+  affected.forEach(pair => {
+    const allHidden = pair._bizTypes.every(t => hiddenTypes.has(t));
+    if (allHidden) {
+      pair.dot.remove();
+      pair.hit.remove();
+    } else {
+      pair.dot.addTo(map);
+      pair.hit.addTo(map);
+    }
+  });
+
+  // Recount visible pairs (deduplicated)
+  const allPairs = new Set(Object.values(layerGroups).flat());
+  let visible = 0;
+  allPairs.forEach(p => { if (map.hasLayer(p.dot)) visible++; });
+  document.getElementById("biz-count").textContent = visible.toLocaleString();
+}
+
 buildLegend();
 
 // Load businesses.json and plot
@@ -368,39 +424,93 @@ fetch("businesses.json")
   .then(data => {
     document.getElementById("biz-count").textContent = data.length.toLocaleString();
 
+    const hitRenderer = L.canvas({ padding: 0.5 });
+
+    function showTooltip(biz, allTypes, e) {
+      document.getElementById("tt-name").textContent = biz.n || "Unknown";
+      document.getElementById("tt-addr").textContent = biz.a || "";
+      document.getElementById("tt-tag").innerHTML = allTypes.map(type => {
+        const c = licenseColor(type);
+        return `<span style="display:inline-block;margin:1px 2px 1px 0;padding:2px 7px;
+                border-radius:20px;font-size:10px;font-weight:600;
+                background:${c}33;color:${c}">${escHtml(type)}</span>`;
+      }).join("");
+      document.getElementById("tt-year").textContent = biz.y ? `Opened ${biz.y}` : "";
+      document.getElementById("biz-tooltip").style.display = "block";
+      moveTooltip(e.originalEvent);
+    }
+
     data.forEach(biz => {
-      const color = licenseColor(biz.t);
-      const circle = L.circleMarker([biz.lat, biz.lng], {
+      const color    = licenseColor(biz.t);
+      const allTypes = biz.ts && biz.ts.length ? biz.ts : [biz.t];
+      const latlng   = [biz.lat, biz.lng];
+
+      // Small visible dot (non-interactive)
+      const dot = L.circleMarker(latlng, {
         renderer,
         radius:      4,
         fillColor:   color,
-        fillOpacity: 0.75,
+        fillOpacity: 0.8,
         color:       color,
         weight:      0,
+        interactive: false,
       }).addTo(map);
 
-      circle.on("mouseover", function(e) {
-        const tt = document.getElementById("biz-tooltip");
-        document.getElementById("tt-name").textContent = biz.n || "Unknown";
-        document.getElementById("tt-addr").textContent = biz.a || "";
-        const tag = document.getElementById("tt-tag");
-        tag.textContent    = biz.t;
-        tag.style.background = color + "33";
-        tag.style.color      = color;
-        document.getElementById("tt-year").textContent =
-          biz.y ? `Opened ${biz.y}` : "";
-        tt.style.display = "block";
-        moveTooltip(e.originalEvent);
+      // Larger invisible hit area (interactive only)
+      const hit = L.circleMarker(latlng, {
+        renderer:    hitRenderer,
+        radius:      12,
+        fillColor:   color,
+        fillOpacity: 0.001,   // nearly invisible but still hittable
+        color:       "transparent",
+        weight:      0,
+        interactive: true,
+      }).addTo(map);
+
+      // Keep dot & hit together for show/hide
+      const pair = { dot, hit, _bizTypes: allTypes };
+
+      // Group by ALL types for toggle
+      allTypes.forEach(type => {
+        if (!layerGroups[type]) layerGroups[type] = [];
+        layerGroups[type].push(pair);
       });
 
-      circle.on("mousemove", e => moveTooltip(e.originalEvent));
-      circle.on("mouseout",  ()  => { tooltip.style.display = "none"; });
+      hit.on("mouseover", e => showTooltip(biz, allTypes, e));
+      hit.on("mousemove", e => moveTooltip(e.originalEvent));
+      hit.on("mouseout",  ()  => { document.getElementById("biz-tooltip").style.display = "none"; });
+
+      hit.on("click", e => {
+        fillCoords(biz.lat, biz.lng);
+        dot.setStyle({ fillOpacity: 1, radius: 7 });
+        setTimeout(() => dot.setStyle({ fillOpacity: 0.8, radius: 4 }), 350);
+        document.getElementById("biz-tooltip").style.display = "none";
+        L.DomEvent.stopPropagation(e); // prevent map click from also firing
+      });
     });
   })
   .catch(err => {
     document.getElementById("biz-count").textContent = "unavailable";
     console.warn("businesses.json not loaded:", err);
   });
+
+// Click anywhere on the map → paste coordinates into input
+function fillCoords(lat, lng) {
+  const inputEl = document.getElementById("user-input");
+  const coords  = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  // Insert at cursor position if input already has text, else replace
+  if (inputEl.value.trim()) {
+    const pos = inputEl.selectionStart;
+    inputEl.value = inputEl.value.slice(0, pos) + coords + inputEl.value.slice(pos);
+  } else {
+    inputEl.value = coords;
+  }
+  inputEl.style.height = "auto";
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 110) + "px";
+  inputEl.focus();
+}
+
+map.on("click", e => fillCoords(e.latlng.lat, e.latlng.lng));
 
 function moveTooltip(e) {
   const tt = document.getElementById("biz-tooltip");
@@ -510,7 +620,8 @@ function appendBotPrediction(text, prediction, meta) {
     L.circleMarker([meta.lat, meta.lon], {
       radius: 10, color: "#fff", weight: 2,
       fillColor: "#4f7eff", fillOpacity: 0.9,
-    }).addTo(map).bindPopup(`<b>Predicted location</b><br>${escHtml(meta.license_type)}`).openPopup();
+      interactive: false,
+    }).addTo(map);
   }
 }
 

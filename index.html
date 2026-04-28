@@ -501,16 +501,16 @@ fetch("businesses.json")
         layerGroups[type].push(pair);
       });
 
-      hit.on("mouseover", e => showTooltip(biz, allTypes, e));
+      hit.on("mouseover", e => { clearTimeout(_ttHide); showTooltip(biz, allTypes, e); });
       hit.on("mousemove", e => moveTooltip(e.originalEvent));
-      hit.on("mouseout",  ()  => { document.getElementById("biz-tooltip").style.display = "none"; });
+      hit.on("mouseout",  ()  => { _ttHide = setTimeout(() => { document.getElementById("biz-tooltip").style.display = "none"; }, 120); });
 
-      hit.on("click", e => {
+      hit.on("dblclick", e => {
         fillCoords(biz.lat, biz.lng);
         dot.setStyle({ fillOpacity: 1, radius: 7 });
         setTimeout(() => dot.setStyle({ fillOpacity: 0.8, radius: 4 }), 350);
         document.getElementById("biz-tooltip").style.display = "none";
-        L.DomEvent.stopPropagation(e); // prevent map click from also firing
+        L.DomEvent.stopPropagation(e);
       });
     });
   })
@@ -534,7 +534,10 @@ function fillCoords(lat, lng) {
   inputEl.focus();
 }
 
-map.on("click", e => fillCoords(e.latlng.lat, e.latlng.lng));
+let _ttHide = null;   // shared tooltip hide timer
+
+map.doubleClickZoom.disable();   // prevent zoom competing with our dblclick
+map.on("dblclick", e => fillCoords(e.latlng.lat, e.latlng.lng));
 
 function moveTooltip(e) {
   const tt = document.getElementById("biz-tooltip");
@@ -668,6 +671,7 @@ function appendBotPrediction(text, prediction, meta, context) {
   if (meta.lat && meta.lon) {
     map.flyTo([meta.lat, meta.lon], 14, { duration: 1.2 });
     L.circleMarker([meta.lat, meta.lon], {
+      renderer,           // canvas renderer — won't block mouse events on other dots
       radius: 10, color: "#fff", weight: 2,
       fillColor: "#4f7eff", fillOpacity: 0.9,
       interactive: false,
